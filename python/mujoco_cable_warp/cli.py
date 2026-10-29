@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 import time
 
@@ -27,10 +28,17 @@ def resolve_model(value: str) -> Path:
     path = Path(value).expanduser()
     if path.is_file():
         return path.resolve()
-    matches = list((ROOT / "cable_plugin_demos").glob(f"{value.zfill(2)}_*.xml"))
+    directories = [Path.cwd() / "cable_plugin_demos", ROOT / "cable_plugin_demos"]
+    if os.environ.get("MUJOCABLE_MODEL_DIR"):
+        directories.insert(0, Path(os.environ["MUJOCABLE_MODEL_DIR"]).expanduser())
+    matches = []
+    for directory in directories:
+        matches = list(directory.glob(f"{value.zfill(2)}_*.xml"))
+        if matches:
+            break
     if len(matches) != 1:
-        raise ValueError(f"Expected a model path or an unambiguous demo number: {value}")
-    return matches[0]
+        raise ValueError(f"Expected an MJCF path or a demo number in cable_plugin_demos: {value}. Supply a path or set MUJOCABLE_MODEL_DIR.")
+    return matches[0].resolve()
 
 
 def draw_cables(sim: CableSimulation, scene, world: int):
@@ -56,8 +64,9 @@ def draw_cables(sim: CableSimulation, scene, world: int):
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Run MuJoCable with MJWarp (no C++ plugin required)")
     parser.add_argument("model", nargs="?", default="15", help="Demo number or MJCF path")
-    parser.add_argument("--device", default="cuda:0", help="Execution device (default: cuda:0; use cpu explicitly for CPU validation)")
+    parser.add_argument("--device", default="auto", help="Execution device (default: auto, preferring CUDA when available)")
     parser.add_argument("--nworld", type=int, default=1)
+    parser.add_argument("--keyframe", help="Initialize and reset to this named MJCF keyframe (e.g. home)")
     parser.add_argument("--headless", action="store_true")
     parser.add_argument("--steps", type=int, default=1000, help="Headless step count")
     parser.add_argument("--duration", type=float, default=120.0, help="Viewer simulation duration before exit")
@@ -80,19 +89,30 @@ def main(argv=None):
     model_path = resolve_model(args.model)
     if model_path.name == "30_cpho_2018_problem3_massive_rope.xml":
         parser.error("Demo 30 requires its dedicated massive-rope continuum controller and has not been ported to MJWarp")
-    sim = CableSimulation(model_path, nworld=args.nworld, device=args.device, nconmax=args.nconmax, njmax=args.njmax)
+    sim = CableSimulation(model_path, nworld=args.nworld, device=None if args.device == "auto" else args.device, nconmax=args.nconmax, njmax=args.njmax)
+    if args.graph and not sim.device.is_cuda:
+        parser.error("--graph requires a CUDA device; omit it for CPU execution")
     actuator = 0
+    for spec in sim.loaded.cables:
+        if spec.actuator_id >= 0 and spec.config.get("ctrl_mode") != "joint_spool_angle":
+            actuator = spec.actuator_id
+            break
     if args.auto_actuator:
         actuator = mujoco.mj_name2id(sim.cpu_model, mujoco.mjtObj.mjOBJ_ACTUATOR, args.auto_actuator)
         if actuator < 0:
             parser.error(f"Unknown actuator: {args.auto_actuator}")
     # Warm up JIT compilation before timing, then restore the reference state.
+    if args.keyframe:
+        sim.reset(keyframe=args.keyframe)
     sim.step()
-    sim.reset()
+    sim.reset(keyframe=args.keyframe)
     if sim.cpu_model.nu and not args.no_auto_control:
         wp.launch(ramp_control, sim.nworld, inputs=[sim.data.time, sim.data.ctrl, actuator, args.ctrl_ramp_start, args.ctrl_ramp_end, args.ctrl_final], device=sim.device)
     if args.graph:
         sim.capture_step()
+        # Some Warp capture modes execute once while recording. Start the
+        # measured rollout from reset state in either capture mode.
+        sim.reset(keyframe=args.keyframe)
 
     def step():
         if sim.cpu_model.nu and not args.no_auto_control:

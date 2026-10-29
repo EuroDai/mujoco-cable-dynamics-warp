@@ -10,6 +10,7 @@ import warp as wp
 @wp.struct
 class Parameters:
     surface: int
+    native_surface: int
     analytic: int
     tendon: int
     actuator: int
@@ -55,6 +56,11 @@ class Topology:
     body_root: wp.array[int]
     dof_body: wp.array[int]
     body_dofs: wp.array2d[int]
+    native_geoms: wp.array2d[int]
+    geom_body: wp.array[int]
+    geom_radius: wp.array[float]
+    guide_contact: wp.array2d[int]
+    contact_mu: wp.array2d[float]
 
 
 @wp.struct
@@ -76,6 +82,14 @@ class State:
     tensions: wp.array3d[float]
     force: wp.array2d[float]
     arc: wp.array2d[wp.vec4]
+    body_forces: wp.array3d[wp.vec3]
+    capstan: wp.array3d[wp.vec4]
+    material: wp.array2d[wp.vec4d]
+    pending_material: wp.array2d[wp.vec4d]
+    material_initialized: wp.array2d[int]
+    pending_valid: wp.array2d[int]
+    material_lengths: wp.array2d[wp.vec3]
+    contact_angles: wp.array2d[wp.vec2]
 
 
 @wp.func
@@ -111,7 +125,7 @@ def route(
     for i in range(12):
         state.values[world, cable, i] = 0.0
     state.count[world, cable] = 0
-    if p.surface == 0:
+    if p.surface == 0 or p.native_surface != 0:
         state.values[world, cable, 0] = ten_length[world, p.tendon]
         state.values[world, cable, 1] = ten_velocity[world, p.tendon]
     else:
@@ -256,7 +270,7 @@ def route(
             velocity += wp.dot(direction, state.velocities[world, cable, i + 1] - state.velocities[world, cable, i])
         state.values[world, cable, 0] = length
         state.values[world, cable, 1] = velocity
-    if state.initialized[world, cable] == 0:
+    if state.initialized[world, cable] == 0 and p.native_surface == 0:
         state.home[world, cable] = p.home_length
         if p.home_length < 0.0:
             state.home[world, cable] = state.values[world, cable, 0]
@@ -349,7 +363,7 @@ def apply_forces(
         if winding != 0.0:
             sign = wp.sign(winding)
         wp.atomic_add(state.force, world, p.joint_dof, -tension * sign * p.spool_radius)
-    if p.surface == 0:
+    if p.surface == 0 or p.friction_direction == 4:
         return
     if p.analytic != 0:
         incoming = tension * state.directions[world, cable, 0]
@@ -364,6 +378,7 @@ def apply_forces(
                 force = -outgoing
             project_point_force(topology, state, world, state.bodies[world, cable, node],
                                 state.points[world, cable, node], force, com, cdof, nv)
+            state.body_forces[world, cable, state.bodies[world, cable, node]] += force
         return
     count = state.count[world, cable]
     material_speed = 0.5 * (
@@ -377,11 +392,16 @@ def apply_forces(
         if node + 1 >= count:
             continue
         mu = float(0.0)
+        contact = int(-1)
         if state.wrap[world, cable, node] >= 0 and state.wrap[world, cable, node - 1] == state.wrap[world, cable, node] and state.wrap[world, cable, node + 1] == state.wrap[world, cable, node]:
             mu = p.capstan_mu
+            contact = state.wrap[world, cable, node]
         elif state.roles[world, cable, node] == 3:
             mu = p.guide_friction_mu
-        if mu > 0.0:
+            contact = topology.guide_contact[cable, node]
+            if contact >= 0:
+                mu = topology.contact_mu[cable, contact]
+        if mu > 0.0 or contact >= 0:
             before = state.directions[world, cable, segment]
             after = state.directions[world, cable, segment + 1]
             exponent = mu * wp.acos(wp.clamp(wp.dot(before, after), -1.0, 1.0))
@@ -391,17 +411,28 @@ def apply_forces(
                 exponent *= wp.tanh(slip / p.capstan_velocity_scale)
             elif p.friction_direction == 0:
                 exponent = -exponent
-            current *= wp.exp(wp.clamp(exponent, -20.0, 20.0))
+            elif p.friction_direction == 3:
+                exponent *= wp.tanh(state.contact_angles[world, cable][0] / p.capstan_velocity_scale)
+            exponent = wp.clamp(exponent, -20.0, 20.0)
+            before_tension = current
+            current *= wp.exp(exponent)
+            if contact >= 0:
+                diagnostic = state.capstan[world, cable, contact]
+                if diagnostic[0] == 0.0:
+                    diagnostic[1] = before_tension
+                diagnostic[0] += wp.acos(wp.clamp(wp.dot(before, after), -1.0, 1.0))
+                diagnostic[2] = current
+                diagnostic[3] += exponent
+                state.capstan[world, cable, contact] = diagnostic
     for node in range(count):
         body = state.bodies[world, cable, node]
-        if body == 0:
-            continue
         force = wp.vec3(0.0)
         if node > 0:
             force -= state.tensions[world, cable, node - 1] * state.directions[world, cable, node - 1]
         if node + 1 < count:
             force += state.tensions[world, cable, node] * state.directions[world, cable, node]
         point = state.points[world, cable, node]
+        state.body_forces[world, cable, body] += force
         project_point_force(topology, state, world, body, point, force, com, cdof, nv)
 
 
@@ -466,6 +497,10 @@ def sensors(state: State, bindings: wp.array2d[int], sensordata: wp.array2d[floa
 def advance(topology: Topology, state: State, ctrl: wp.array2d[float], qpos: wp.array2d[float], timestep: float):
     world, cable = wp.tid()
     p = topology.parameters[cable]
+    if state.pending_valid[world, cable] != 0:
+        state.material[world, cable] = state.pending_material[world, cable]
+        state.material_initialized[world, cable] = 1
+        state.pending_valid[world, cable] = 0
     target = command(p, world, ctrl, qpos)
     if p.mode == 2 or p.mode == 3:
         speed = target
@@ -496,5 +531,9 @@ def reset_cables(state: State, mask: wp.array[bool]):
         state.initialized[world, cable] = 0
         state.branch[world, cable] = 0
         state.count[world, cable] = 0
+        state.material_initialized[world, cable] = 0
+        state.pending_valid[world, cable] = 0
+        state.material[world, cable] = wp.vec4d(0.0)
+        state.pending_material[world, cable] = wp.vec4d(0.0)
         for i in range(12):
             state.values[world, cable, i] = 0.0

@@ -1,12 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "mujoco-cable-dynamics"
 version = "0.2.0"
 description = "Unilateral surface-envelope cable dynamics plugin for MuJoCo"
 requires-python = ">=3.10"
-dependencies = ["mujoco>=3.4,<3.5", "numpy>=1.26", "pillow>=10"]
+dependencies = ["mujoco>=3.4,<3.17", "numpy>=1.26", "pillow>=10"]
 
 [project.optional-dependencies]
 analysis = ["matplotlib>=3.8"]
+cpp = ["mujoco>=3.4,<3.5"]
+warp = ["mujoco==3.16.0", "mujoco-warp==3.16.0", "warp-lang==1.18.0"]
+
+[project.scripts]
+mujocable-mjwarp = "mujoco_cable_warp.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["python"]
+include = ["mujoco_cable", "mujoco_cable.*", "mujoco_cable_warp", "mujoco_cable_warp.*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

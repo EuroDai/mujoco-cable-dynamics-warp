@@ -4,23 +4,26 @@
 单边张力、控制状态、摩擦和受力映射由 Warp 内核执行，刚体运动与碰撞由
 MJWarp 执行。运行时不需要加载 C++ 绳索动态库。
 
-这是第一版后端，尚未覆盖全部 C++ 功能。建议从 Demo 15、17、19 开始。
+后端支持原生 tendon、guide 折线路线、单圆柱表面包络，以及原生双圆柱路线的
+三段材料摩擦历史。可从 Demo 15、17、19 开始。多表面复合包络、mesh 绳路和
+插件隐式积分仍未覆盖。
 
 ## 安装
 
 从仓库根目录执行，使用独立环境。原 C++ 后端使用 MuJoCo 3.4，MJWarp 环境
 使用 `requirements-warp.txt` 中固定的 MuJoCo 3.16.0、MJWarp 3.16.0 和
-Warp 1.18.0；不要在这个环境中执行原项目的 `pip install -e .`，它会要求
-MuJoCo 3.4。
+Warp 1.18.0。Python 包通过 `warp` 和 `cpp` extra 分别选择两套运行环境；
+不要在同一个环境中同时安装这两个 extra。
 
 ```bash
 python3 -m venv .venv-warp
 source .venv-warp/bin/activate
-python -m pip install -r requirements-warp.txt
+python -m pip install -e '.[warp]'
 ```
 
 Linux x86_64 上使用 CUDA 12 驱动（例如本机 RTX 4090 的 R550 驱动）时，
-把上面的安装命令改为 `python -m pip install -r requirements-warp-cu12.txt`。
+先执行 `python -m pip install -r requirements-warp-cu12.txt`，
+再执行 `python -m pip install -e . --no-deps` 安装源码包和命令行入口。
 该文件选择同版本的官方 `1.18.0+cu12` wheel；普通 PyPI wheel 要求 CUDA 13
 驱动。参见 [Warp 官方安装说明](https://github.com/NVIDIA/warp#installing)。
 
@@ -58,20 +61,24 @@ python scripts/run_mjwarp_demo.py path/to/model.xml --device cuda:0
 启动器优先使用仓库 `.venv-warp` 中的 `python3`（macOS 使用 `mjpython`），
 不存在时使用当前环境的解释器；`MUJOCO_PYTHON` 可以显式覆盖这一选择。
 `MUJOCABLE_BACKEND=mjwarp` 可设置默认后端。
+安装包后也可执行 `mujocable-mjwarp 15 --headless --device cpu`。
+按 Demo 编号启动时从源码树、当前目录的 `cable_plugin_demos` 或
+`MUJOCABLE_MODEL_DIR` 查找模型；wheel 不捆绑 Demo 资产，仓库外可直接传入 XML 路径。
 
 常用参数：
 
 | 参数 | 含义 |
 |---|---|
-| `--device cpu` / `cuda:0` | 执行设备；命令行默认使用 `cuda:0`，无 GPU 时须显式选择 CPU |
+| `--device auto` / `cpu` / `cuda:0` | 默认自动优先选择 CUDA，无可用 GPU 时使用 CPU |
 | `--nworld N` | 相同拓扑的独立环境数量 |
+| `--keyframe home` | 从指定 MJCF keyframe 初始化，包含位置和控制量 |
 | `--headless --steps N` | 无窗口执行指定步数，结束时检查状态并输出 JSON |
 | `--duration 120` | 窗口运行的仿真时长；到时退出，不循环重置 |
 | `--world N` | 窗口显示哪个环境 |
-| `--auto-actuator NAME` | 自动控制的执行器，默认第一个 |
+| `--auto-actuator NAME` | 自动控制的执行器，优先选择直接控制绳索的执行器，否则使用第一个 |
 | `--ctrl-final 0.05` | 自动控制最终值，单位取决于模型的控制模式 |
 | `--ctrl-ramp-start 0.5 --ctrl-ramp-end 3` | 自动控制线性上升的时间段 |
-| `--no-auto-control` | 无窗口时保持零控制；有窗口时使用控制滑块 |
+| `--no-auto-control` | 无窗口时保留重置后的控制量；有窗口时使用控制滑块 |
 | `--show-route-debug` | 显示端点、引导点和路线 hint |
 | `--graph` | 预热后捕获 CUDA 步进图；仅 CUDA 可用 |
 | `--nconmax 64 --njmax 256` | 接触和约束缓冲区容量 |
@@ -88,6 +95,7 @@ JSON 中的 `max_final_tension` 是所有环境在最后一步的最大张力，
 | `route_mode=native` | 支持，使用 MJWarp 原生 tendon 几何和传力 |
 | 无包络的 surface 路线 | 支持端点和 role-3 guide 的折线路线 |
 | 单圆柱 surface 包络 | 支持 `endpoint → hint → endpoint`，包括运动圆柱和轴向变化 |
+| 原生双圆柱 surface 路线 | 支持 `site → cylinder → site → cylinder → site` 平面路线、实际切点及脱离接触 |
 | 圆柱端面约束 | 暂不支持；接触点超出圆柱侧面时报告无效路线并停用该绳的力 |
 | 多圆柱复合包络、mesh 表面路线 | 暂不支持，加载时抛出明确异常 |
 | 单边弹性、阻尼、松弛、预张紧、张力上限 | 支持 |
@@ -95,7 +103,10 @@ JSON 中的 `max_final_tension` 是所有环境在最后一步的最大张力，
 | 收缩量、卷轴角、卷轴线/角速度、真实卷轴关节 | 支持五种控制模式 |
 | 控制滤波和最大收绳速率 | 支持，状态每个物理步只推进一次 |
 | 有符号预绕余量、卷轴反力矩 | 支持 |
-| surface 包络/guide 的 Capstan 摩擦 | 支持正向、反向和速度定向传播 |
+| surface 包络/guide 的 Capstan 摩擦 | 支持正向、反向、速度定向和滤波控制方向传播 |
+| 三段材料 stick-slip | 支持四点 guide 和原生双圆柱路线，保留材料历史及两处独立摩擦系数 |
+| 刚体力／绞盘传感器 | 支持 `body_force_sensor`、`capstan_sensor`、`capstan_sensor_guides` 和 `guide_friction_mus` |
+| 配套铰链摩擦 | 支持 `mjhinge.hinge_friction` 的载荷历史、径向/轴向增益、Stribeck 项和角度相关增益 |
 | native 路线的插件 Capstan 摩擦 | 暂不支持 |
 | `integration_mode=explicit` | 支持 |
 | `local_implicit` / `implicit_compliant` | 暂不支持，加载时报错 |
@@ -104,7 +115,8 @@ JSON 中的 `max_final_tension` 是所有环境在最后一步的最大张力，
 | 批量状态与按环境重置 | 支持 |
 
 单圆柱求解固定初始化 hint 选出的绕行方向，运行时不把 hint 当作受力点。
-侧面展开后解析计算螺旋切线的轴向坐标。`capstan_mu=0` 时自动使用解析快速路径：
+侧面展开后解析计算螺旋切线的轴向坐标。`capstan_mu=0` 且未请求 `capstan_sensor`
+时自动使用解析快速路径：
 长度为两段直线加精确螺旋弧长，长度速度由端点与切点的刚体速度计算，受力只在
 两个端点和两个切点映射到广义力，包含运动圆柱的反力和反力矩。它不执行逐弧点
 物理采样；其连续弧长与 C++ 的折线近似存在小幅差异。
@@ -166,6 +178,9 @@ surface_residual, solver_iterations
 训练程序可以直接操作 `sim.data.ctrl`，避免逐步 CPU 上传/下载。保存和恢复
 完整状态时还必须保存绳索的积分控制量、滤波量、张紧 latch、参考长度和绕行
 分支；仅保存 MJWarp 的 qpos/qvel 不足以恢复绳索历史。
+`checkpoint = sim.save_state()` 和 `sim.restore_state(checkpoint)` 保存/恢复
+完整积分状态及绳索、铰链历史，适用于同一模型和相同环境数量；恢复时保持原设备数组，
+不破坏已捕获的 CUDA 图。检查点中的 `material` 使用 float64 保存三段材料余量及总余量。
 
 CUDA 图捕获前先执行一次预热步进，再 reset，随后调用 `sim.capture_step()`。
 捕获后更新数组内容，不替换数组对象。图捕获不包含外部控制策略。
@@ -174,6 +189,8 @@ CUDA 图捕获前先执行一次预热步进，再 reset，随后调用 `sim.cap
 
 - `python/mujoco_cable_warp/model.py`：解析配置、转换 MJCF、检查支持范围。
 - `python/mujoco_cable_warp/kernels.py`：绳路、张力、摩擦、力映射和控制状态内核。
+- `python/mujoco_cable_warp/material.py`：原生双圆柱切点、三段材料 return mapping 和专用传感器。
+- `python/mujoco_cable_warp/hinge.py`：用上一已解算步的轴承载荷更新本步摩擦约束上限。
 - `python/mujoco_cable_warp/simulation.py`：分配批量状态，连接 MJWarp 回调，提供步进与重置。
 - `python/mujoco_cable_warp/cli.py`：无窗口运行、交互显示和结果导出。
 - `scripts/run_mjwarp_demo.py`：源码树入口。
@@ -187,10 +204,10 @@ CUDA 图捕获前先执行一次预热步进，再 reset，随后调用 `sim.cap
 在 MJWarp 环境中：
 
 ```bash
-python -m pytest tests/test_mjwarp_backend.py tests/test_portable_paths.py -q
+python -m pytest tests/test_mjwarp_backend.py tests/test_mjwarp_material.py tests/test_portable_paths.py -q
 
 # 在有 NVIDIA 驱动的机器上运行相同测试，包括 CUDA 图测试
-CABLE_WARP_DEVICE=cuda:0 python -m pytest tests/test_mjwarp_backend.py -q
+CABLE_WARP_DEVICE=cuda:0 python -m pytest tests/test_mjwarp_backend.py tests/test_mjwarp_material.py -q
 ```
 
 测试覆盖单边本构、控制限幅、传感器布局、独立 CPU 力学轨迹、卷轴反力矩、
@@ -233,6 +250,40 @@ Demo 17 并添加 `--mode forces`。
 
 结果保存在 `outputs/mjwarp/demo15_cuda.json`、`compare15_cuda.json` 和
 `forces17_cuda.json`（输出目录不纳入版本管理）。GPU 图形窗口尚未实测。
+
+## 材料历史与载荷接口
+
+`capstan_direction=stick_slip` 支持四点 guide 路线和
+`site → cylinder → site → cylinder → site` 的平面原生绳路。
+后者通过 MJWarp 获取实际切点，各圆弧的弹性长度分别均分到相邻材料段；
+脱离接触时保留材料段并将对应包角置零。平面容差为 `2e-7 m`。
+三段材料总量守恒，仅路线末端与外部卷轴交换材料；两处摩擦系数通过
+`guide_friction_mus` 分别配置。材料历史在物理步结束时提交，`forward()` 不推进历史。
+
+`body_force_sensor` 按 body ID 输出世界坐标 `[Fx, Fy, Fz]`，维度为 `3*nbody`。
+`capstan_sensor` 每处输出 `[angle, entry_tension, exit_tension, log_ratio]`；
+`capstan_sensor_guides` 指定诊断 guide 的顺序。这两个传感器与原有诊断传感器独立，
+名称、地址顺序和维度保留。
+
+`mjhinge.hinge_friction` 接口读取上一已解算步的径向/轴向轴承载荷，
+更新各环境本步的原生摩擦约束上限，支持载荷增益、低速增强及角度相关增益。
+原有多项式关节弹簧和阻尼由 MJWarp 计算，无需 C++ 插件动态库。
+
+可直接传入外部 MJCF；模型及其参数保留在调用方项目中：
+
+```bash
+mujocable-mjwarp /path/to/model.xml \
+  --device cuda:0 --headless --keyframe home --no-auto-control --steps 1000 --graph
+```
+
+程序使用非零初始收绳量时，应在第一次 `forward()` 前同时设置
+`sim.data.ctrl` 和 `sim.state.filtered`；每个环境可独立初始化。
+
+`tests/fixtures/two_cylinder_material.xml` 是独立构造的双圆柱机械测试模型。
+回归测试覆盖切点、包角、零摩擦虚功、摩擦锥、材料与受力守恒、批量重置、
+完整状态重放和 CUDA 图；通过可选的 C++ 参考库对照受力与轨迹。
+小包角使用 cross/dot 的 `atan2` 求解，避免 `acos(dot/r²)` 在接近脱离接触时
+放大 float32 几何误差。
 
 ## 2048 环境的绳索计算开销
 
@@ -313,6 +364,5 @@ MuJoCo/MJWarp 3.16.0 + 当前 Warp 绳索实现；控制为第一个执行器恒
 上述结果表明已测配置下的数值近似一致，不能推导出任意模型、控制轨迹、刚度、
 步长或长期接触过程都等价；尤其不覆盖尚未移植的复合包络和隐式绳索积分。
 
-此处没有接入 ParaHand-Sim2Real 的
-真实手部绳路、物体分布、策略、奖励、重置或 PPO 更新，因此不能将上述百分比
-当作该项目训练时间的增幅。绳索若要求更小物理步长，还需单独计入增加的子步数。
+上述性能基准没有覆盖完整训练中的模型分布、策略、奖励、重置或 PPO 更新，
+因此不能将上述百分比直接当作训练时间的增幅。绳索若要求更小物理步长，还需单独计入增加的子步数。

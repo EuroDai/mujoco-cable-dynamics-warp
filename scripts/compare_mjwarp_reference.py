@@ -25,12 +25,20 @@ def record_reference(args):
     import mujoco
 
     mujoco.mj_loadPluginLibrary(str(args.plugin.resolve()))
+    for plugin in args.extra_plugin:
+        mujoco.mj_loadPluginLibrary(str(plugin.resolve()))
     model = mujoco.MjModel.from_xml_path(str(args.model.resolve()))
     data = mujoco.MjData(model)
     if model.nu:
         data.ctrl[args.actuator] = args.control
     mujoco.mj_forward(model, data)
-    sensors = [i for i in range(model.nsensor) if model.sensor_type[i] == mujoco.mjtSensor.mjSENS_PLUGIN]
+    import xml.etree.ElementTree as ET
+    from mujoco_cable_warp.model import _expand_includes
+
+    root = ET.parse(args.model).getroot()
+    _expand_includes(root, args.model.resolve().parent, (args.model.resolve(),))
+    auxiliary = {config.get("value") for config in root.findall(".//config") if config.get("key") in ("body_force_sensor", "capstan_sensor")}
+    sensors = [i for i in range(model.nsensor) if model.sensor_type[i] == mujoco.mjtSensor.mjSENS_PLUGIN and model.sensor(i).name not in auxiliary]
     qpos, qvel, cables, force = [], [], [], []
     for step in range(args.steps + 1):
         if step:
@@ -46,6 +54,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--reference-python", type=Path)
     parser.add_argument("--plugin", type=Path, required=True)
+    parser.add_argument("--extra-plugin", type=Path, action="append", default=[], help="Additional C++ reference library (e.g. mjhinge); repeatable")
     parser.add_argument("--model", type=Path, default=ROOT / "cable_plugin_demos/15_cpp_plugin_surface_single_pulley.xml")
     parser.add_argument("--steps", type=int, default=200)
     parser.add_argument("--control", type=float, default=0.01)
@@ -73,6 +82,7 @@ def main():
             "--plugin", str(args.plugin.resolve()), "--model", str(args.model.resolve()),
             "--steps", str(args.steps), "--control", str(args.control), "--actuator", str(args.actuator),
             "--reference-output", str(reference),
+            *[value for plugin in args.extra_plugin for value in ("--extra-plugin", str(plugin.resolve()))],
         ], check=True)
         with np.load(reference) as cpu:
             reference_data = {name: cpu[name].copy() for name in cpu.files}
@@ -85,7 +95,7 @@ def main():
     qpos, qvel, cables, force = [], [], [], []
     # Match plugin sensor order, including models with more than one sensor
     # attached to a single cable instance.
-    sensor_order = sorted((sensor, cable) for cable, spec in enumerate(sim.loaded.cables) for sensor in spec.sensor_ids)
+    sensor_order = sorted((sensor, cable) for cable, spec in enumerate(sim.loaded.cables) for sensor in spec.sensor_ids if spec.sensor_kinds[sensor] == 0)
     if not sensor_order:
         parser.error("comparison requires at least one cable sensor")
     for step in range(args.steps + 1):

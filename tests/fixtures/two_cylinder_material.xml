@@ -1,0 +1,82 @@
+<mujoco model="two_cylinder_material_bench">
+  <compiler angle="radian" autolimits="true"/>
+  <size nuser_site="1"/>
+  <option timestep="0.0002" gravity="0 0 -9.81" integrator="implicitfast"/>
+  <extension>
+    <plugin plugin="mujoco.cable.unilateral">
+      <instance name="cable">
+        <config key="route_mode" value="surface"/>
+        <config key="route_tendon" value="route"/>
+        <config key="site_role_user_index" value="0"/>
+        <config key="capstan_direction" value="stick_slip"/>
+        <config key="guide_friction_mu" value="0.2"/>
+        <config key="guide_friction_mus" value="0.2 0.4"/>
+        <config key="capstan_sensor_guides" value="guide_a guide_b"/>
+        <config key="body_force_sensor" value="body_forces"/>
+        <config key="capstan_sensor" value="capstans"/>
+        <config key="ctrl_mode" value="target_contraction"/>
+        <config key="home_length" value="0.2"/>
+        <config key="stiffness" value="1000"/>
+        <config key="damping" value="0"/>
+        <config key="control_timeconstant" value="0.02"/>
+      </instance>
+    </plugin>
+    <plugin plugin="mjhinge.hinge_friction">
+      <instance name="bearing_b">
+        <config key="joint" value="joint_b"/>
+        <config key="radial_gain" value="0.001"/>
+        <config key="axial_gain" value="0.0005"/>
+        <config key="body_force_sensors" value="body_forces"/>
+        <config key="static_extra" value="0.001"/>
+        <config key="stribeck_velocity" value="0.02"/>
+      </instance>
+      <instance name="bearing_a">
+        <config key="joint" value="joint_a"/>
+        <config key="radial_gain" value="0.0005"/>
+        <config key="axial_gain" value="0.001"/>
+        <config key="body_force_sensors" value="body_forces"/>
+        <config key="static_extra" value="0.0005"/>
+        <config key="stribeck_velocity" value="0.02"/>
+        <config key="radial_peak_gain" value="0.001"/>
+        <config key="radial_peak_angle" value="0.7"/>
+        <config key="radial_peak_width" value="0.2"/>
+      </instance>
+    </plugin>
+  </extension>
+  <worldbody>
+    <site name="anchor" pos="0.04 0.02 0" user="1"/>
+    <body name="carrier" pos="0.1 0 0">
+      <joint name="joint_b" axis="0 0 1" damping="0.1" stiffness="0.01" frictionloss="0.001"/>
+      <geom type="sphere" size="0.025" mass="0.2" contype="0" conaffinity="0"/>
+      <geom name="cylinder_a" type="cylinder" pos="0.075 0.025 0" size="0.01 0.03" mass="0" contype="0" conaffinity="0"/>
+      <geom name="cylinder_b" type="cylinder" pos="0.025 0.025 0" size="0.01 0.03" mass="0" contype="0" conaffinity="0"/>
+      <site name="guide_a" pos="0.075 0.015 0" user="3"/>
+      <site name="guide_b" pos="0.025 0.015 0" user="3"/>
+      <site name="side_a" pos="0.075 0.005 0"/>
+      <site name="side_b" pos="0.025 0.005 0"/>
+      <site name="midpoint" pos="0.05 0.015 0"/>
+      <body name="lever" pos="0.1 0 0">
+        <joint name="joint_a" axis="0 0 1" damping="0.1" stiffness="0.02" frictionloss="0.001"/>
+        <geom type="sphere" size="0.02" mass="0.1" contype="0" conaffinity="0"/>
+        <site name="end" pos="0.04 0.02 0" user="1"/>
+      </body>
+    </body>
+  </worldbody>
+  <tendon>
+    <spatial name="route">
+      <site site="end"/>
+      <geom geom="cylinder_a" sidesite="side_a"/>
+      <site site="midpoint"/>
+      <geom geom="cylinder_b" sidesite="side_b"/>
+      <site site="anchor"/>
+    </spatial>
+  </tendon>
+  <actuator>
+    <plugin name="pull" instance="cable" tendon="route" gear="0" ctrlrange="0 0.05"/>
+  </actuator>
+  <sensor>
+    <plugin name="state" instance="cable"/>
+    <plugin name="body_forces" instance="cable"/>
+    <plugin name="capstans" instance="cable"/>
+  </sensor>
+</mujoco>

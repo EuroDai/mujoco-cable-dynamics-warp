@@ -42,6 +42,7 @@ KNOWN_CONFIG = set(FLOAT_DEFAULTS) | {
     "wrap_geoms", "site_role_user_index", "integration_mode", "mesh_route_mode",
     "mesh_guide_axis", "mesh_guide_weight", "route_hysteresis",
     "composite_merge_distance", "visual_smoothing_timeconstant",
+    "guide_friction_mus", "body_force_sensor", "capstan_sensor", "capstan_sensor_guides",
 }
 
 
@@ -60,6 +61,9 @@ class CableSpec:
     site_ids: list[int] = field(default_factory=list)
     geom_id: int = -1
     sensor_ids: list[int] = field(default_factory=list)
+    sensor_kinds: dict[int, int] = field(default_factory=dict)
+    guide_site_ids: list[int] = field(default_factory=list)
+    native_geom_ids: list[int] = field(default_factory=list)
 
 
 @dataclass
@@ -67,6 +71,7 @@ class CableModel:
     model: mujoco.MjModel
     cables: list[CableSpec]
     source: Path
+    hinges: list[dict[str, str]] = field(default_factory=list)
 
 
 def _expand_includes(root: ET.Element, directory: Path, stack: tuple[Path, ...]) -> None:
@@ -114,8 +119,32 @@ def _validate_config(spec: CableSpec) -> None:
         raise ValueError(f"{spec.name}: invalid spool_reserve_direction")
     if c.get("spool_reaction_torque", "false") not in ("true", "false"):
         raise ValueError(f"{spec.name}: spool_reaction_torque must be true or false")
-    if c.get("capstan_direction", "forward") not in ("forward", "reverse", "velocity"):
+    if c.get("capstan_direction", "forward") not in ("forward", "reverse", "velocity", "control", "stick_slip"):
         raise ValueError(f"{spec.name}: invalid capstan_direction")
+    guides = c.get("capstan_sensor_guides", "").split()
+    mus = c.get("guide_friction_mus", "").split()
+    if mus and (len(mus) != len(guides) or any(not math.isfinite(float(x)) or float(x) < 0 for x in mus)):
+        raise ValueError(f"{spec.name}: guide_friction_mus requires one finite nonnegative value per capstan_sensor_guides site")
+    if len(guides) != len(set(guides)):
+        raise ValueError(f"{spec.name}: duplicate capstan_sensor_guides")
+    if c.get("route_mode", "native") != "surface" and any(c.get(name) for name in ("body_force_sensor", "capstan_sensor", "capstan_sensor_guides", "guide_friction_mus")):
+        raise UnsupportedCableError(f"{spec.name}: cable force and capstan sensors require a surface route")
+    if c.get("capstan_direction") == "control" and (
+        c.get("route_mode", "native") != "surface"
+        or c.get("ctrl_mode", "target_contraction") != "target_contraction"
+        or (float(c.get("control_timeconstant", 0)) <= 0 and float(c.get("max_contraction_rate", 0)) <= 0)
+    ):
+        raise ValueError(f"{spec.name}: control friction requires a surface cable with filtered target_contraction")
+    if c.get("capstan_direction") == "stick_slip" and (
+        c.get("route_mode", "native") != "surface"
+        or c.get("ctrl_mode", "target_contraction") != "target_contraction"
+        or float(c.get("damping", 0)) != 0
+        or c.get("wrap_geoms", "").strip()
+        or len(guides) != 2
+    ):
+        raise UnsupportedCableError(f"{spec.name}: stick_slip requires an elastic surface cable with two guides and no wrap_geoms")
+    if c.get("body_force_sensor") and c.get("body_force_sensor") == c.get("capstan_sensor"):
+        raise ValueError(f"{spec.name}: body_force_sensor and capstan_sensor must be distinct")
     if c.get("route_mode", "native") == "native" and (
         float(c.get("capstan_mu", 0)) or float(c.get("guide_friction_mu", 0))
     ):
@@ -143,8 +172,13 @@ def load_model(path: str | Path) -> CableModel:
         compiler.set(name, str((path.parent / compiler.get(name, assetdir)).resolve()))
 
     specs: dict[str, CableSpec] = {}
+    hinges = []
     for extension in root.findall("extension"):
         for plugin in extension:
+            if plugin.get("plugin") == "mjhinge.hinge_friction":
+                for instance in plugin:
+                    hinges.append({"name": instance.attrib["name"], **{x.attrib["key"]: x.attrib["value"] for x in instance}})
+                continue
             if plugin.get("plugin") != PLUGIN:
                 raise UnsupportedCableError(f"Unsupported engine plugin: {plugin.get('plugin')}")
             for instance in plugin:
@@ -190,7 +224,17 @@ def load_model(path: str | Path) -> CableModel:
         sensor.attrib.pop("instance")
         sensor.tag = "user"
         sensor.set("name", name)
-        sensor.set("dim", "12" if specs[instance].config.get("route_mode") == "surface" else "8")
+        c = specs[instance].config
+        # nbody is known after compilation. Count bodies here so user sensors
+        # have the correct dimensions when MuJoCo lays out sensordata.
+        dimension = 12 if c.get("route_mode") == "surface" else 8
+        if name == c.get("body_force_sensor"):
+            dimension = 3 * (1 + len(root.findall(".//worldbody//body")))
+        elif name == c.get("capstan_sensor"):
+            dimension = 4 * (len(c.get("wrap_geoms", "").replace(",", " ").split()) + len(c.get("capstan_sensor_guides", "").split()))
+            if dimension == 0:
+                raise ValueError(f"{instance}: capstan_sensor requires wraps or guide sites")
+        sensor.set("dim", str(dimension))
         sensor.set("needstage", "vel")
 
     model = mujoco.MjModel.from_xml_string(ET.tostring(root, encoding="unicode"))
@@ -236,15 +280,33 @@ def load_model(path: str | Path) -> CableModel:
             raise ValueError(f"{spec.name}: surface seed tendon must not apply native forces or limits")
         first = model.tendon_adr[spec.tendon_id]
         count = model.tendon_num[spec.tendon_id]
-        if np.any(model.wrap_type[first:first + count] != mujoco.mjtWrap.mjWRAP_SITE):
-            raise UnsupportedCableError(f"{spec.name}: surface seed must contain sites only")
-        spec.site_ids = model.wrap_objid[first:first + count].tolist()
+        types = model.wrap_type[first:first + count]
+        objects = model.wrap_objid[first:first + count]
+        native_cylinders = count == 5 and list(types) == [mujoco.mjtWrap.mjWRAP_SITE, mujoco.mjtWrap.mjWRAP_CYLINDER, mujoco.mjtWrap.mjWRAP_SITE, mujoco.mjtWrap.mjWRAP_CYLINDER, mujoco.mjtWrap.mjWRAP_SITE]
+        if np.any(types != mujoco.mjtWrap.mjWRAP_SITE) and not native_cylinders:
+            raise UnsupportedCableError(f"{spec.name}: surface seed requires sites or a native two-cylinder route")
+        if native_cylinders:
+            if c.get("capstan_direction") != "stick_slip" or c.get("wrap_geoms", "").strip():
+                raise UnsupportedCableError(f"{spec.name}: native surface cylinders currently require stick_slip and no wrap_geoms")
+            spec.native_geom_ids = objects[[1, 3]].tolist()
+        spec.site_ids = objects[types == mujoco.mjtWrap.mjWRAP_SITE].tolist()
         role_index = int(c.get("site_role_user_index", 0))
         if not 0 <= role_index < model.nuser_site:
             raise ValueError(f"{spec.name}: invalid site_role_user_index")
         roles = np.rint(model.site_user[spec.site_ids, role_index]).astype(int).tolist()
         if len(roles) < 2 or roles[0] != 1 or roles[-1] != 1:
             raise ValueError(f"{spec.name}: surface endpoints must have role 1")
+        spec.guide_site_ids = [lookup(mujoco.mjtObj.mjOBJ_SITE, name) for name in c.get("capstan_sensor_guides", "").split()]
+        for i, site in enumerate(spec.guide_site_ids):
+            if int(round(model.site_user[site, role_index])) != 3:
+                raise ValueError(f"{spec.name}: capstan_sensor_guides must have role 3")
+            if native_cylinders:
+                if model.site_bodyid[site] != model.geom_bodyid[spec.native_geom_ids[i]]:
+                    raise ValueError(f"{spec.name}: native guide must belong to its cylinder body")
+            elif site not in spec.site_ids:
+                raise ValueError(f"{spec.name}: capstan_sensor_guides must belong to the route")
+        if c.get("capstan_direction") == "stick_slip" and not native_cylinders and (roles != [1, 3, 3, 1] or spec.guide_site_ids != spec.site_ids[1:3]):
+            raise UnsupportedCableError(f"{spec.name}: stick_slip requires endpoint, two ordered guides, endpoint")
         wraps = c.get("wrap_geoms", "").replace(",", " ").split()
         if wraps:
             geom_ids = [lookup(mujoco.mjtObj.mjOBJ_GEOM, name) for name in wraps]
@@ -253,13 +315,26 @@ def load_model(path: str | Path) -> CableModel:
             if len(wraps) != 1 or roles != [1, 2, 1]:
                 raise UnsupportedCableError(f"{spec.name}: cylinder routes currently require endpoint, one hint, endpoint; composite wraps are not implemented")
             spec.geom_id = geom_ids[0]
-        elif any(role not in (1, 3) for role in roles):
+        elif not native_cylinders and any(role not in (1, 3) for role in roles):
             raise ValueError(f"{spec.name}: unwrapped surface routes may contain only endpoints and role-3 guides")
     for name, instance in sensor_names.items():
-        specs[instance].sensor_ids.append(lookup(mujoco.mjtObj.mjOBJ_SENSOR, name))
+        spec = specs[instance]
+        sensor = lookup(mujoco.mjtObj.mjOBJ_SENSOR, name)
+        spec.sensor_ids.append(sensor)
+        spec.sensor_kinds[sensor] = 1 if name == spec.config.get("body_force_sensor") else (2 if name == spec.config.get("capstan_sensor") else 0)
+        if spec.sensor_kinds[sensor] == 1 and model.sensor_dim[sensor] != 3 * model.nbody:
+            raise UnsupportedCableError(f"{instance}: body_force_sensor dimension changed during body fusion")
+    for spec in specs.values():
+        for option in ("body_force_sensor", "capstan_sensor"):
+            if spec.config.get(option) and sensor_names.get(spec.config[option]) != spec.name:
+                raise ValueError(f"{spec.name}: {option} must name a sensor attached to this surface cable")
     cable_sensors = {sensor for spec in specs.values() for sensor in spec.sensor_ids}
     if any(model.sensor_type[sensor] == mujoco.mjtSensor.mjSENS_USER and sensor not in cable_sensors for sensor in range(model.nsensor)):
         raise UnsupportedCableError("Additional user sensor callbacks must be integrated explicitly")
     if model.opt.integrator not in (mujoco.mjtIntegrator.mjINT_EULER, mujoco.mjtIntegrator.mjINT_IMPLICITFAST):
         raise UnsupportedCableError("Cable stepping supports Euler and implicitfast; RK4 would advance route history in sub-stages")
-    return CableModel(model, list(specs.values()), path)
+    if hinges:
+        from .hinge import validate_hinges
+
+        validate_hinges(model, hinges, list(specs.values()))
+    return CableModel(model, list(specs.values()), path, hinges)

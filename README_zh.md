@@ -1,21 +1,8 @@
 # MuJoCo 绳索动力学插件
 
-<p align="center">
-  <a href="https://arxiv.org/abs/2609.09612"><img alt="arXiv 2609.09612" src="https://img.shields.io/badge/arXiv-2609.09612-b31b1b?logo=arxiv&logoColor=white"></a>
-  <a href="https://mujocable.github.io/"><img alt="学术项目主页" src="https://img.shields.io/badge/Project-Homepage-4c8c64"></a>
-  <a href="https://github.com/MuJoCable/mujoco-cable-dynamics/actions/workflows/ci.yml"><img alt="持续集成" src="https://github.com/MuJoCable/mujoco-cable-dynamics/actions/workflows/ci.yml/badge.svg?branch=main"></a>
-  <a href="https://github.com/MuJoCable/mujoco-cable-dynamics/releases/latest"><img alt="最新版本" src="https://img.shields.io/github/v/release/MuJoCable/mujoco-cable-dynamics?display_name=tag&sort=semver"></a>
-  <a href="LICENSE"><img alt="Apache-2.0 许可证" src="https://img.shields.io/github/license/MuJoCable/mujoco-cable-dynamics"></a>
-  <a href="https://github.com/MuJoCable/mujoco-cable-dynamics/stargazers"><img alt="GitHub Stars" src="https://img.shields.io/github/stars/MuJoCable/mujoco-cable-dynamics?style=flat&logo=github&label=Stars"></a>
-</p>
+原版仓库：[MuJoCable/mujoco-cable-dynamics](https://github.com/MuJoCable/mujoco-cable-dynamics)。
 
-<p align="center">
-  <img alt="MuJoCo 3.4.x" src="https://img.shields.io/badge/MuJoCo-3.4.x-5b8c2a">
-  <img alt="C++ 17" src="https://img.shields.io/badge/C%2B%2B-17-00599C?logo=cplusplus&logoColor=white">
-  <img alt="Python 3.12" src="https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white">
-</p>
-
-[English README](README.md) | [学术项目主页](https://mujocable.github.io/) |
+[English README](README.md) |
 [精选示例](docs/DEMO_CATALOG.md) |
 [穿绳设计指南](docs/CABLE_DESIGN_AND_THREADING_GUIDE_zh.md) |
 [全部命令](docs/RUN_ALL_DEMOS_zh.md)
@@ -54,7 +41,10 @@
 ./scripts/run_demo.sh 15 --backend mjwarp --device cuda:0 --show-route-debug
 ```
 
-MJWarp 命令行默认使用 `cuda:0`，CPU 验证可显式指定 `--device cpu`。
+MJWarp 命令行自动优先选择 CUDA，无 GPU 时使用 CPU。
+可通过 `pip install -e '.[warp]'` 安装 Python 包和 `mujocable-mjwarp` 命令。
+支持双圆柱路线的三段材料 stick-slip 历史、
+独立导向点摩擦系数、刚体力／绞盘传感器及配套的载荷相关铰链摩擦。
 这一后端不依赖 C++ 动态库。目前尚未支持多表面复合包络、mesh 绳路和插件隐式
 积分；完整支持范围、设备要求、Python API 和对照验证见
 [MJWarp 后端说明](docs/MJWARP_BACKEND.md)。
@@ -108,10 +98,10 @@ cd mujoco-cable-dynamics
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -e .
+python -m pip install -e '.[cpp]'
 ```
 
-也可以在已有的 conda 环境中执行 `python -m pip install -e .`。
+也可以在已有的 conda 环境中执行 `python -m pip install -e '.[cpp]'`。
 
 ### 2. 编译插件
 
@@ -146,7 +136,7 @@ mjpython scripts/view_cpp_plugin_demo.py \
 
 ## 精选 Demo
 
-仓库只保留学术项目主页中展示的模型：
+仓库包含以下示例：
 
 | 类别 | Demo | 内容 |
 |---|---|---|
@@ -287,26 +277,3 @@ Faive PIP 对照、100_fingers 人体机械手以及仓库相对路径检查。
 - 当前 Faive PIP 回归中，离散双表面桥接路线保持无穿透，但界面切向角最坏约为
   `21.2 deg`。Demo 25 应视为研究对照模型，而不是经过实物验证的数字孪生；
 - 二进制 Release 必须匹配操作系统、CPU 架构和 MuJoCo ABI。
-
-## 许可证
-
-代码采用 Apache License 2.0。资产归属见 [LICENSE](LICENSE) 与
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
-
-## 引用
-
-如果 MuJoCable 对您的研究有所帮助，请引用对应论文：
-[MuJoCable: Reduced-Order Surface-Routed Cable Transmission for Tendon-Driven
-Robots](https://arxiv.org/abs/2609.09612)。
-
-```bibtex
-@misc{zhang2026mujocablereducedordersurfaceroutedcable,
-  title={MuJoCable: Reduced-Order Surface-Routed Cable Transmission for Tendon-Driven Robots},
-  author={Yi Zhang and Qi Shao and Yicong Lin and Muyuan Ma and Tao Sun and Yue Xie},
-  year={2026},
-  eprint={2609.09612},
-  archivePrefix={arXiv},
-  primaryClass={cs.RO},
-  url={https://arxiv.org/abs/2609.09612}
-}
-```

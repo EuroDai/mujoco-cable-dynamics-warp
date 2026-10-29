@@ -6,6 +6,7 @@ __pycache__/
 .ruff_cache/
 .venv/
 .venv-warp/
+*.egg-info/
 venv/
 
 # CMake and native binaries
@@ -45,5 +46,3 @@ MUJOCO_LOG.TXT
 ._*
 .Spotlight-V100
 .Trashes
-
-cable_plugin_demos/am2_parahand_right_medium_mujocable.xml

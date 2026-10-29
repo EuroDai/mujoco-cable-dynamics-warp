@@ -1,21 +1,8 @@
 # MuJoCo Cable Dynamics
 
-<p align="center">
-  <a href="https://arxiv.org/abs/2609.09612"><img alt="arXiv 2609.09612" src="https://img.shields.io/badge/arXiv-2609.09612-b31b1b?logo=arxiv&logoColor=white"></a>
-  <a href="https://mujocable.github.io/"><img alt="Project homepage" src="https://img.shields.io/badge/Project-Homepage-4c8c64"></a>
-  <a href="https://github.com/MuJoCable/mujoco-cable-dynamics/actions/workflows/ci.yml"><img alt="Continuous integration" src="https://github.com/MuJoCable/mujoco-cable-dynamics/actions/workflows/ci.yml/badge.svg?branch=main"></a>
-  <a href="https://github.com/MuJoCable/mujoco-cable-dynamics/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/MuJoCable/mujoco-cable-dynamics?display_name=tag&sort=semver"></a>
-  <a href="LICENSE"><img alt="Apache-2.0 license" src="https://img.shields.io/github/license/MuJoCable/mujoco-cable-dynamics"></a>
-  <a href="https://github.com/MuJoCable/mujoco-cable-dynamics/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/MuJoCable/mujoco-cable-dynamics?style=flat&logo=github&label=Stars"></a>
-</p>
+Original repository: [MuJoCable/mujoco-cable-dynamics](https://github.com/MuJoCable/mujoco-cable-dynamics).
 
-<p align="center">
-  <img alt="MuJoCo 3.4.x" src="https://img.shields.io/badge/MuJoCo-3.4.x-5b8c2a">
-  <img alt="C++ 17" src="https://img.shields.io/badge/C%2B%2B-17-00599C?logo=cplusplus&logoColor=white">
-  <img alt="Python 3.12" src="https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white">
-</p>
-
-[中文说明](README_zh.md) | [Project page](https://mujocable.github.io/) |
+[中文说明](README_zh.md) |
 [Selected demos](docs/DEMO_CATALOG.md) |
 [Threading guide](docs/CABLE_DESIGN_AND_THREADING_GUIDE.md) |
 [All commands](docs/RUN_ALL_DEMOS.md)
@@ -62,9 +49,13 @@ in a separate environment from the MuJoCo 3.4 C++ backend (use
 ./scripts/run_demo.sh 15 --backend mjwarp --device cuda:0 --show-route-debug
 ```
 
-The MJWarp CLI defaults to `cuda:0`; select `--device cpu` for CPU validation.
-The initial backend supports native tendon routes (Demos 17/19), straight surface
-routes with guides, and a single cylinder surface envelope (Demo 15). Composite
+The MJWarp CLI automatically selects CUDA when available, otherwise CPU.
+Install the Python package with `pip install -e '.[warp]'` to also use the
+`mujocable-mjwarp` command. It supports native tendon routes (Demos 17/19), straight surface
+routes with guides, and a single cylinder surface envelope (Demo 15). Native
+two-cylinder routes also support three-reservoir stick-slip history,
+independent guide friction coefficients, Cartesian body-force and capstan sensors,
+and the associated load-dependent hinge friction. Composite
 wraps, mesh surface routing, and implicit cable integration are not yet supported.
 No C++ plugin binary is required. See the [MJWarp guide](docs/MJWARP_BACKEND.md)
 for setup, supported features, Python API, and cross-backend validation.
@@ -121,7 +112,7 @@ cd mujoco-cable-dynamics
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -e .
+python -m pip install -e '.[cpp]'
 ```
 
 ### 2. Configure and build
@@ -160,7 +151,7 @@ mjpython scripts/view_cpp_plugin_demo.py \
 
 ## Selected Demos
 
-Only demos shown on the academic project page are included here.
+The repository includes the following demos.
 
 | Group | Demos | Contents |
 |---|---|---|
@@ -319,26 +310,3 @@ Release.
   digital twin.
 - Binary releases must match the target operating system, CPU architecture, and
   MuJoCo ABI.
-
-## License
-
-Code is distributed under Apache License 2.0. See [LICENSE](LICENSE) and
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for asset attribution.
-
-## Citation
-
-If MuJoCable contributes to your research, please cite the accompanying paper:
-[MuJoCable: Reduced-Order Surface-Routed Cable Transmission for Tendon-Driven
-Robots](https://arxiv.org/abs/2609.09612).
-
-```bibtex
-@misc{zhang2026mujocablereducedordersurfaceroutedcable,
-  title={MuJoCable: Reduced-Order Surface-Routed Cable Transmission for Tendon-Driven Robots},
-  author={Yi Zhang and Qi Shao and Yicong Lin and Muyuan Ma and Tao Sun and Yue Xie},
-  year={2026},
-  eprint={2609.09612},
-  archivePrefix={arXiv},
-  primaryClass={cs.RO},
-  url={https://arxiv.org/abs/2609.09612}
-}
-```
