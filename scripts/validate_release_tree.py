@@ -46,6 +46,9 @@ FORBIDDEN_DIRECTORIES = {
     "node_modules",
 }
 IGNORED_BUILD_DIRECTORIES = {
+    ".venv",
+    ".venv-warp",
+    "venv",
     "build",
     "dist",
     "outputs",

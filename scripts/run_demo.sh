@@ -8,6 +8,27 @@ if [[ $# -gt 0 ]]; then
   shift
 fi
 
+BACKEND="${MUJOCABLE_BACKEND:-cpp}"
+FORWARDED=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --backend)
+      if [[ $# -lt 2 ]]; then
+        echo "--backend requires cpp or mjwarp" >&2
+        exit 2
+      fi
+      BACKEND="$2"
+      shift 2
+      ;;
+    *) FORWARDED+=("$1"); shift ;;
+  esac
+done
+set -- "${FORWARDED[@]}"
+if [[ "$BACKEND" != "cpp" && "$BACKEND" != "mjwarp" ]]; then
+  echo "Unknown backend '$BACKEND'. Choose cpp or mjwarp." >&2
+  exit 2
+fi
+
 case "$DEMO" in
   09) MODEL="$ROOT/cable_plugin_demos/09_cpp_plugin_free_hanging_single_pulley.xml" ;;
   10) MODEL="$ROOT/cable_plugin_demos/10_cpp_plugin_dual_pulley_free_payload.xml" ;;
@@ -46,6 +67,13 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
   RUNNER="${MUJOCO_PYTHON:-mjpython}"
 else
   RUNNER="${MUJOCO_PYTHON:-python3}"
+fi
+
+if [[ "$BACKEND" == "mjwarp" ]]; then
+  if [[ -z "${MUJOCO_PYTHON:-}" && -x "$ROOT/.venv-warp/bin/$RUNNER" ]]; then
+    RUNNER="$ROOT/.venv-warp/bin/$RUNNER"
+  fi
+  exec "$RUNNER" "$ROOT/scripts/run_mjwarp_demo.py" "$MODEL" "$@"
 fi
 
 if [[ "$(basename "$MODEL")" == "30_cpho_2018_problem3_massive_rope.xml" ]]; then

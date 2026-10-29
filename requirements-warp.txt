@@ -1,0 +1,6 @@
+# Install in a separate environment from the MuJoCo 3.4 C++ plugin backend.
+mujoco==3.16.0
+mujoco-warp==3.16.0
+warp-lang==1.18.0
+numpy>=1.26
+pytest>=8

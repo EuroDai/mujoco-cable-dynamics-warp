@@ -43,6 +43,22 @@
 
 适用范围是可以忽略绳质量、下垂、弯扭、波传播和自接触的准静态或低频绳驱机构。
 
+## MJWarp 后端
+
+新增独立的 Warp 内核后端，支持批量仿真、按环境重置，以及 Demo 15 的单圆柱
+包络和 Demo 17/19 的原生绳路。安装 `requirements-warp.txt` 到独立环境后
+（Linux x86_64 的 CUDA 12 驱动使用 `requirements-warp-cu12.txt`）：
+
+```bash
+./scripts/run_demo.sh 15 --backend mjwarp --headless --nworld 256 --steps 3500 --graph
+./scripts/run_demo.sh 15 --backend mjwarp --device cuda:0 --show-route-debug
+```
+
+MJWarp 命令行默认使用 `cuda:0`，CPU 验证可显式指定 `--device cpu`。
+这一后端不依赖 C++ 动态库。目前尚未支持多表面复合包络、mesh 绳路和插件隐式
+积分；完整支持范围、设备要求、Python API 和对照验证见
+[MJWarp 后端说明](docs/MJWARP_BACKEND.md)。
+
 ## 与 MuJoCo 原生 Tendon 的关系
 
 普通固定 site 路径和 MuJoCo 已支持的 wrap object 应优先使用原生 spatial tendon。

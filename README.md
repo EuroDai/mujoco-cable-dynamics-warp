@@ -50,6 +50,25 @@ The intended domain is quasi-static and low-frequency cable-driven mechanisms
 where cable mass, sag, bending, torsion, wave propagation, and self-contact can
 be neglected.
 
+## MJWarp Backend
+
+An additional `mujoco_cable_warp` backend runs cable kernels with MuJoCo Warp,
+including batched worlds and independent resets. Install `requirements-warp.txt`
+in a separate environment from the MuJoCo 3.4 C++ backend (use
+`requirements-warp-cu12.txt` for Linux x86_64 with CUDA 12 drivers), then run:
+
+```bash
+./scripts/run_demo.sh 15 --backend mjwarp --headless --nworld 256 --steps 3500 --graph
+./scripts/run_demo.sh 15 --backend mjwarp --device cuda:0 --show-route-debug
+```
+
+The MJWarp CLI defaults to `cuda:0`; select `--device cpu` for CPU validation.
+The initial backend supports native tendon routes (Demos 17/19), straight surface
+routes with guides, and a single cylinder surface envelope (Demo 15). Composite
+wraps, mesh surface routing, and implicit cable integration are not yet supported.
+No C++ plugin binary is required. See the [MJWarp guide](docs/MJWARP_BACKEND.md)
+for setup, supported features, Python API, and cross-backend validation.
+
 ## Native MuJoCo Tendon Comparison
 
 MuJoCo spatial tendons remain the preferred choice for ordinary fixed routing

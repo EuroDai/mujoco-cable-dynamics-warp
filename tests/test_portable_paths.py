@@ -35,6 +35,9 @@ class PortablePathTest(unittest.TestCase):
                 part
                 in {
                     ".git",
+                    ".venv",
+                    ".venv-warp",
+                    "venv",
                     ".playwright-cli",
                     ".vinext",
                     ".wrangler",
