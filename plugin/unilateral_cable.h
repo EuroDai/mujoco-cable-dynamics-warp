@@ -73,7 +73,11 @@ private:
   void ApplyCapstanFriction(const mjModel *m, mjData *d,
                             const EvalResult &result, int actuator_id) const;
   void ApplySurfaceForces(const mjModel *m, mjData *d,
-                          const EvalResult &result) const;
+                          const EvalResult &result, mjtNum control_speed) const;
+  void ApplyStickSlipSurfaceForces(const mjModel *m, mjData *d, int instance,
+                                   EvalResult &result) const;
+  mjtNum ControlContractionRate(const mjModel *m, const mjData *d,
+                               int instance, int actuator_id) const;
   void ApplySpoolReactionTorque(const mjModel *m, mjData *d,
                                 const EvalResult &result) const;
   bool UpdateSurfaceRoute(const mjModel *m, const mjData *d);
@@ -101,6 +105,7 @@ private:
   mjtNum spool_qpos0_ = 0;
   mjtNum capstan_mu_ = 0;
   mjtNum guide_friction_mu_ = 0;
+  std::vector<mjtNum> guide_friction_mus_;
   mjtNum capstan_velocity_scale_ = 0.01;
   std::string ctrl_mode_;
   std::string integration_mode_;
@@ -124,6 +129,14 @@ private:
   mutable std::vector<bool> cached_native_valid_;
   mutable std::vector<std::array<mjtNum, 3>> visual_points_;
   mutable mjtNum visual_time_ = -1;
+  int body_force_sensor_id_ = -1;
+  int capstan_sensor_id_ = -1;
+  mutable std::vector<mjtNum> body_forces_;
+  std::vector<int> guide_site_ids_;
+  // Wraps then role-3 guides: angle, entry tension, exit tension, log ratio.
+  mutable std::vector<mjtNum> capstan_state_;
+  mutable std::array<mjtNum, 4> pending_material_state_ = {};
+  mutable bool pending_material_valid_ = false;
 };
 
 } // namespace mujoco::plugin::cable

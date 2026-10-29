@@ -339,7 +339,7 @@ Vec3 EdgePoint(const std::vector<Vec3> &vertices,
 
 mjtNum RayMesh(const mjModel *m, const mjData *d, int geom_id,
                const Vec3 &origin, const Vec3 &direction) {
-#if mjVERSION_HEADER >= 3010000
+#if CABLE_HAS_RAY_MESH_NORMAL
   return mj_rayMesh(m, d, geom_id, origin.data(), direction.data(), nullptr);
 #else
   return mj_rayMesh(m, d, geom_id, origin.data(), direction.data());
@@ -867,6 +867,27 @@ std::optional<SurfaceEnvelopeRoute> SurfaceEnvelopeRoute::Create(
   if (count < 2) {
     *error = "surface route seed tendon requires at least two sites";
     return std::nullopt;
+  }
+
+  // Native finite-radius route: endpoint/cylinder/MP midpoint/cylinder/endpoint.
+  // Read MuJoCo's tangent solution rather than replacing it with fixed sites.
+  bool native = count == 5;
+  for (int i = 0; i < count && native; ++i) {
+    native = m->wrap_type[address+i] == (i % 2 ? mjWRAP_CYLINDER : mjWRAP_SITE);
+  }
+  if (native) {
+    if (!wrap_geom_ids.empty()) {
+      *error = "native cylinders must not also specify wrap_geoms";
+      return std::nullopt;
+    }
+    const int body = m->geom_bodyid[m->wrap_objid[address+1]];
+    if (m->geom_bodyid[m->wrap_objid[address+3]] != body ||
+        m->site_bodyid[m->wrap_objid[address+2]] != body) {
+      *error = "both native cylinders and middle site must share one rigid body";
+      return std::nullopt;
+    }
+    route.native_cylinders_ = true;
+    return route;
   }
 
   int hint_count = 0;
@@ -3146,7 +3167,82 @@ int SurfaceEnvelopeRoute::SolveCompositePairs(const mjModel *m,
   return total_iterations;
 }
 
+bool SurfaceEnvelopeRoute::UpdateNativeCylinders(const mjModel *m, const mjData *d) {
+  Result next;
+  next.native_cylinders = true;
+  next.status = Status::kValid;
+  const int adr = m->tendon_adr[tendon_id_];
+  const int start = d->ten_wrapadr[tendon_id_];
+  const int end = start + d->ten_wrapnum[tendon_id_];
+  int cursor = start;
+  for (int element = 0; element < 5; ++element) {
+    const int id = m->wrap_objid[adr+element];
+    if (element % 2 == 0) {
+      if (cursor >= end || d->wrap_obj[cursor] != -1) return false;
+      Point point;
+      point.pos = PointerVec(d->wrap_xpos+3*cursor++);
+      point.site_id = id;
+      point.body_id = m->site_bodyid[id];
+      next.points.push_back(point);
+    } else {
+      const int wrap = (element-1)/2;
+      Point entry, exit;
+      entry.geom_id = exit.geom_id = id;
+      entry.body_id = exit.body_id = m->geom_bodyid[id];
+      entry.wrap_index = exit.wrap_index = wrap;
+      if (cursor < end && d->wrap_obj[cursor] == id) {
+        if (cursor+1 >= end || d->wrap_obj[cursor+1] != id) return false;
+        entry.pos = PointerVec(d->wrap_xpos+3*cursor++);
+        exit.pos = PointerVec(d->wrap_xpos+3*cursor++);
+        const Vec3 a = WorldToLocal(d, id, entry.pos);
+        const Vec3 b = WorldToLocal(d, id, exit.pos);
+        // This adapter is for the planar CAD route (cylinder axes normal to it).
+        if (std::abs(a[2]-b[2]) > 1e-9) return false;
+        next.capstan_angles[wrap] = std::acos(Clamp(
+            (a[0]*b[0]+a[1]*b[1])/(m->geom_size[3*id]*m->geom_size[3*id]), -1, 1));
+      } else {
+        // Lift-off: no obstacle force and mu*theta=0. Split the free straight
+        // span at a virtual point only to retain the original material states.
+        const Vec3 a = next.points.back().pos;
+        const Vec3 b = PointerVec(d->site_xpos+3*m->wrap_objid[adr+element+1]);
+        const Vec3 delta = Sub(b,a);
+        const mjtNum t = Clamp(Dot(Sub(PointerVec(d->geom_xpos+3*id),a),delta)/
+                                   std::max(Dot(delta,delta),mjtNum(1e-20)), .001, .999);
+        entry.pos = exit.pos = Add(a,Scale(delta,t));
+      }
+      next.points.push_back(entry);
+      next.points.push_back(exit);
+    }
+  }
+  if (cursor != end || next.points.size() != 7) return false;
+  std::array<mjtNum, 6> lengths = {};
+  for (int i = 0; i < 6; ++i) {
+    const Vec3 delta = Sub(next.points[i+1].pos,next.points[i].pos);
+    lengths[i] = Norm(delta);
+    next.segment_directions.push_back(Normalize(delta));
+  }
+  for (int wrap = 0; wrap < 2; ++wrap) {
+    const int segment = 1+3*wrap;
+    lengths[segment] = m->geom_size[3*m->wrap_objid[adr+1+2*wrap]] * next.capstan_angles[wrap];
+  }
+  // Retain three elastic material reservoirs. Assign half of each short arc
+  // to either adjacent reservoir; total length includes exact circular arcs.
+  next.material_lengths = {lengths[0]+.5*lengths[1],
+      .5*lengths[1]+lengths[2]+lengths[3]+.5*lengths[4],
+      .5*lengths[4]+lengths[5]};
+  next.length = std::accumulate(lengths.begin(),lengths.end(),mjtNum(0));
+  if (std::abs(next.length-d->ten_length[tendon_id_]) > 1e-9) return false;
+  next.velocity = d->ten_velocity[tendon_id_];
+  result_ = std::move(next);
+  if (!has_initial_length_) {
+    initial_length_ = result_.length;
+    has_initial_length_ = true;
+  }
+  return true;
+}
+
 bool SurfaceEnvelopeRoute::Update(const mjModel *m, const mjData *d) {
+  if (native_cylinders_) return UpdateNativeCylinders(m,d);
   if (!initialized_) {
     int wrap_cursor = 0;
     for (int seed_index = 0;

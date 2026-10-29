@@ -49,6 +49,9 @@ class SurfaceEnvelopeRoute {
   };
 
   struct Result {
+    bool native_cylinders = false;
+    std::array<mjtNum, 3> material_lengths = {};
+    std::array<mjtNum, 2> capstan_angles = {};
     mjtNum length = 0;
     mjtNum velocity = 0;
     mjtNum tangent_residual = 0;
@@ -155,6 +158,8 @@ class SurfaceEnvelopeRoute {
                                  int wrap_index);
   bool BuildResult(const mjModel *m, const mjData *d);
 
+  bool UpdateNativeCylinders(const mjModel *m, const mjData *d);
+  bool native_cylinders_ = false;
   int tendon_id_ = -1;
   int site_role_user_index_ = 0;
   MeshRouteMode mesh_route_mode_ = MeshRouteMode::kConvexSurface;
