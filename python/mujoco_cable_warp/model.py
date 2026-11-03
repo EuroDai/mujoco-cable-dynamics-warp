@@ -97,11 +97,23 @@ def _validate_config(spec: CableSpec) -> None:
         raise UnsupportedCableError(f"{spec.name}: unknown cable options: {sorted(unknown)}")
     if c.get("route_mode", "native") not in ("native", "surface"):
         raise ValueError(f"{spec.name}: invalid route_mode")
-    if c.get("integration_mode", "explicit") != "explicit":
+    if c.get("integration_mode", "explicit") not in ("explicit", "implicit_elastic"):
         raise UnsupportedCableError(
-            f"{spec.name}: MJWarp cable integration currently supports explicit forces only; "
+            f"{spec.name}: MJWarp supports explicit and implicit_elastic; "
             "local_implicit and implicit_compliant require separate solver integration."
         )
+    if c.get("integration_mode") == "implicit_elastic":
+        if float(c.get("damping", 0)) != 0:
+            raise UnsupportedCableError(
+                "implicit_elastic currently requires zero cable damping"
+            )
+        material = c.get("capstan_direction") == "stick_slip"
+        if not material and c.get("route_mode", "native") != "native":
+            raise UnsupportedCableError(
+                "implicit_elastic supports native routing or stick_slip material"
+            )
+        if c.get("ctrl_mode", "target_contraction") == "joint_spool_angle":
+            raise UnsupportedCableError("implicit_elastic excludes joint spools")
     if c.get("ctrl_mode", "target_contraction") not in CONTROL_MODES:
         raise ValueError(f"{spec.name}: invalid ctrl_mode")
     for name, default in FLOAT_DEFAULTS.items():

@@ -11,6 +11,7 @@ import warp as wp
 
 from . import kernels as k
 from . import material
+from .implicit import ImplicitElastic
 from .model import CONTROL_MODES, FLOAT_DEFAULTS, CableModel, load_model
 
 
@@ -170,6 +171,8 @@ class CableSimulation:
         self.state.material_lengths = wp.zeros(shape, dtype=wp.vec3)
         self.state.contact_angles = wp.zeros(shape, dtype=wp.vec2)
 
+        self.implicit_elastic = ImplicitElastic(self)
+
     def _passive(self, model, data):
         if self.hinges and self.hinges.enabled(model):
             self.hinges.update_limits(data)
@@ -197,6 +200,7 @@ class CableSimulation:
         if self._has_material:
             wp.launch(material.apply_material_forces, shape, inputs=[self.topology, self.state, data.subtree_com, data.cdof, self.cpu_model.nv], device=self.device)
         wp.launch(k.add_forces, (self.nworld, self.cpu_model.nv), inputs=[self.state.force, data.qfrc_passive], device=self.device)
+        self.implicit_elastic.apply(self, model, data)
 
     def _actuator(self, model, data):
         wp.launch(k.actuator_forces, (self.nworld, self.ncable), inputs=[self.topology, self.state, data.actuator_force], device=self.device)
@@ -212,8 +216,16 @@ class CableSimulation:
         with wp.ScopedDevice(self.device):
             mjw.forward(self.model, self.data)
 
+    def physics_step(self):
+        """Advance physics without committing cable or hinge history."""
+        self.implicit_elastic.active = True
+        try:
+            mjw.step(self.model, self.data)
+        finally:
+            self.implicit_elastic.active = False
+
     def _step(self):
-        mjw.step(self.model, self.data)
+        self.physics_step()
         if self.hinges and self.hinges.enabled(self.model):
             self.hinges.advance()
         if self.ncable:
